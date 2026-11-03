@@ -238,6 +238,8 @@ MERGE_BASE_TAG = '_tag'
 MERGE_BASE_SPECIFIED = '_specified'
 MERGE_BASE_GUESS = '_guess'
 MERGE_BASE_MARKERS = (MERGE_BASE_TAG, MERGE_BASE_SPECIFIED, MERGE_BASE_GUESS)
+# Patches touching only these paths cannot be tested, so Tested-by is dropped
+UNTESTABLE_PATHS_PREFIX = 'Documentation/devicetree/bindings/'
 DIFFSTAT_RE = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M | re.I)
 # Body lines that mboxrd escapes by adding one more '>'
 MBOXRD_FROM_RE = re.compile(rb'^(>*From )', flags=re.M)
@@ -2180,6 +2182,25 @@ class LoreMessage:
                 self._blob_indexes = set()
         return self._blob_indexes
 
+    def is_untestable_trailer(self, ltr: 'LoreTrailer') -> bool:
+        """Tell whether *ltr* is a Tested-by for a patch nothing can test.
+
+        Devicetree bindings are never executed, so a Tested-by on a patch
+        touching only Documentation/devicetree/bindings/ credits testing
+        that did not happen.  Such tags usually come from blanket
+        Tested-by replies to the cover letter.
+        """
+        if ltr.lname != 'tested-by':
+            return False
+        paths = {
+            path
+            for oldpath, _ohash, newpath, _fmod in self.blob_indexes
+            for path in (oldpath, newpath)
+        }
+        return bool(paths) and all(
+            path.startswith(UNTESTABLE_PATHS_PREFIX) for path in paths
+        )
+
     @property
     def has_attestation_headers(self) -> bool:
         """Tell whether :attr:`attestors` would have anything to check.
@@ -3508,6 +3529,13 @@ class LoreMessage:
         new_trailers = self.followup_trailers
         if extras:
             new_trailers += extras
+
+        for ltr in list(new_trailers):
+            if self.is_untestable_trailer(ltr):
+                logger.info(
+                    '    x %s (bindings-only patch)', ltr.as_string(omit_extinfo=True)
+                )
+                new_trailers.remove(ltr)
 
         if sobtr in new_trailers:
             # Our own signoff always moves to the bottom of all trailers

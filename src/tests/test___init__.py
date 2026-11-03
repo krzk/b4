@@ -900,6 +900,165 @@ def test_link_trailer_dedup(body_link: str, extra_link: str, expect_count: int) 
     assert len(link_trailers) == expect_count
 
 
+def _make_diff(paths: List[str]) -> str:
+    return '\n'.join(
+        f'diff --git a/{path} b/{path}\n'
+        'index 1111111..2222222 100644\n'
+        f'--- a/{path}\n'
+        f'+++ b/{path}\n'
+        '@@ -1 +1 @@\n'
+        '-old\n'
+        '+new'
+        for path in paths
+    )
+
+
+def _make_lmsg(paths: List[str], body_trailers: str = '') -> b4.LoreMessage:
+    raw = (
+        'From: Test Author <test@example.com>\n'
+        'Subject: [PATCH] test\n'
+        'Date: Mon, 1 Jan 2024 00:00:00 +0000\n'
+        'Message-Id: <patch@example.com>\n'
+        '\n'
+        'Commit body here.\n'
+        '\n'
+        'Signed-off-by: Test Author <test@example.com>\n'
+        f'{body_trailers}'
+        '---\n'
+        f'{_make_diff(paths)}\n'
+    )
+    msg = email.message_from_string(raw, policy=email.policy.EmailPolicy(utf8=True))
+    return b4.LoreMessage(msg)
+
+
+BINDING = 'Documentation/devicetree/bindings/foo/vendor,foo.yaml'
+
+
+@pytest.mark.parametrize(
+    'paths, trailer_name, expected',
+    [
+        ([BINDING], 'Tested-by', True),
+        ([BINDING], 'tested-by', True),
+        (
+            [BINDING, 'Documentation/devicetree/bindings/bar/vendor,bar.yaml'],
+            'Tested-by',
+            True,
+        ),
+        ([BINDING], 'Reviewed-by', False),
+        ([BINDING], 'Acked-by', False),
+        # Other documentation is not bindings
+        (['Documentation/process/foo.rst'], 'Tested-by', False),
+        (['Documentation/devicetree/usage-model.rst'], 'Tested-by', False),
+        # Code next to the binding can be tested
+        ([BINDING, 'drivers/foo/foo.c'], 'Tested-by', False),
+        (['arch/arm64/boot/dts/vendor/board.dts'], 'Tested-by', False),
+        (['drivers/foo/foo.c'], 'Tested-by', False),
+        # No diff at all: nothing to judge by
+        ([], 'Tested-by', False),
+    ],
+)
+def test_is_untestable_trailer(
+    paths: List[str], trailer_name: str, expected: bool
+) -> None:
+    lmsg = _make_lmsg(paths)
+    ltr = b4.LoreTrailer(name=trailer_name, value='Tester <tester@example.com>')
+    assert lmsg.is_untestable_trailer(ltr) is expected
+
+
+@pytest.mark.parametrize(
+    'paths, kept',
+    [
+        ([BINDING], False),
+        ([BINDING, 'drivers/foo/foo.c'], True),
+    ],
+)
+def test_fix_trailers_drops_tested_by_on_bindings(
+    paths: List[str], kept: bool
+) -> None:
+    lmsg = _make_lmsg(paths)
+    tested = b4.LoreTrailer(name='Tested-by', value='Tester <tester@example.com>')
+    reviewed = b4.LoreTrailer(
+        name='Reviewed-by', value='Reviewer <reviewer@example.com>'
+    )
+    lmsg.followup_trailers = [tested, reviewed]
+    lmsg.fix_trailers()
+    _, _, trailers, _, _ = b4.LoreMessage.get_body_parts(lmsg.body)
+    assert reviewed in trailers
+    assert (tested in trailers) is kept
+
+
+def test_fix_trailers_keeps_tested_by_already_in_bindings_patch() -> None:
+    """Only new trailers are dropped; the patch's own ones stay."""
+    lmsg = _make_lmsg(
+        [BINDING], body_trailers='Tested-by: Tester <tester@example.com>\n'
+    )
+    lmsg.fix_trailers()
+    _, _, trailers, _, _ = b4.LoreMessage.get_body_parts(lmsg.body)
+    tested = b4.LoreTrailer(name='Tested-by', value='Tester <tester@example.com>')
+    assert tested in trailers
+
+
+def test_cover_tested_by_skips_bindings_patch() -> None:
+    """A blanket Tested-by on the cover letter is not applied to a
+    bindings-only patch, but still lands on the rest of the series."""
+
+    def _mkmsg(raw: str) -> email.message.EmailMessage:
+        return email.message_from_string(
+            raw, policy=email.policy.EmailPolicy(utf8=True)
+        )
+
+    hdr = 'From: Test Author <test@example.com>\nDate: Mon, 1 Jan 2024 00:00:00 +0000\n'
+    cover = _mkmsg(
+        hdr + 'Subject: [PATCH 0/2] Add foo\nMessage-Id: <cover@example.com>\n'
+        '\nThis adds foo.\n'
+    )
+    patches = []
+    for counter, (subject, path) in enumerate(
+        [('dt-bindings: add foo', BINDING), ('foo: add driver', 'drivers/foo/foo.c')],
+        start=1,
+    ):
+        patches.append(
+            _mkmsg(
+                hdr + f'Subject: [PATCH {counter}/2] {subject}\n'
+                f'Message-Id: <patch{counter}@example.com>\n'
+                'In-Reply-To: <cover@example.com>\n'
+                'References: <cover@example.com>\n'
+                '\n'
+                f'{subject}.\n'
+                '\n'
+                'Signed-off-by: Test Author <test@example.com>\n'
+                '---\n'
+                f'{_make_diff([path])}\n'
+            )
+        )
+    reply = _mkmsg(
+        'From: Tester <tester@example.com>\n'
+        'Date: Mon, 1 Jan 2024 01:00:00 +0000\n'
+        'Subject: Re: [PATCH 0/2] Add foo\n'
+        'Message-Id: <reply@example.com>\n'
+        'In-Reply-To: <cover@example.com>\n'
+        'References: <cover@example.com>\n'
+        '\n'
+        '> This adds foo.\n'
+        '\n'
+        'Tested-by: Tester <tester@example.com>\n'
+        'Reviewed-by: Tester <tester@example.com>\n'
+    )
+    lmbx = b4.LoreMailbox()
+    for msg in [cover, *patches, reply]:
+        lmbx.add_message(msg)
+    lser = lmbx.get_series()
+    assert lser is not None
+
+    am_msgs = lser.get_am_ready()
+    assert len(am_msgs) == 2
+    bodies = [b4.LoreMessage.get_payload(m)[0] for m in am_msgs]
+    assert 'Reviewed-by: Tester <tester@example.com>' in bodies[0]
+    assert 'Tested-by: Tester <tester@example.com>' not in bodies[0]
+    assert 'Reviewed-by: Tester <tester@example.com>' in bodies[1]
+    assert 'Tested-by: Tester <tester@example.com>' in bodies[1]
+
+
 class TestTakeFlow:
     """Simulate the 'take' flow using the actual code path: build email
     messages (as if fetched from lore), feed through LoreMailbox →

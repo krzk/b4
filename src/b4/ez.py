@@ -2420,6 +2420,9 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         parts = b4.LoreMessage.get_body_parts(lmsg.body)
         midmask = str(config['midmask'])
         for fltr in lmsg.followup_trailers:
+            if lmsg.is_untestable_trailer(fltr):
+                logger.debug('  - %s (bindings-only patch)', fltr.as_string())
+                continue
             if fltr not in parts[2]:
                 rendered = fltr.as_string(omit_extinfo=True)
                 via_msgid = fltr.lmsg.msgid if fltr.lmsg else ''
