@@ -1040,6 +1040,22 @@ integrate your b4 workflow with patchwork.
 
      Default: ``None``
 
+   :term:`b4.pw-show-states`
+     The Patchwork states of the patches the ``b4 review`` Patchwork
+     browser lists. Takes a comma- or space-separated list of state
+     slugs, and may be given more than once. Use this if your project
+     uses custom states for patches that still need attention. For
+     example::
+
+         pw-show-states = new, under-review, needs-review
+
+     Series whose state changes to one outside this list stay in the
+     listing until the next refresh, but are dimmed.
+
+     Default: ``new, under-review``
+
+     .. versionadded:: v0.17
+
    :term:`b4.pw-user`
      Your username on the patchwork server. When this is set and
      :term:`b4.pw-key` is not, b4 asks your git credential helpers for the

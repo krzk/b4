@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 import pytest
 
 import b4
+import b4.review
 from b4.review._review import (
     PW_BACKLOG_GATE,
     PW_WINDOW_DAYS,
@@ -221,3 +222,42 @@ class TestProgressCallback:
         calls = self._run(monkeypatch, sess)
         assert calls[0] == (0, 17)
         assert all(total == 17 for _fetched, total in calls)
+
+
+# ---------------------------------------------------------------------------
+# b4.pw-show-states
+# ---------------------------------------------------------------------------
+
+
+class TestShowStates:
+    @pytest.mark.parametrize(
+        'value,expected',
+        [
+            pytest.param(None, ['new', 'under-review'], id='default'),
+            pytest.param('', ['new', 'under-review'], id='empty-is-default'),
+            pytest.param('needs-review', ['needs-review'], id='single'),
+            pytest.param(
+                'new, Changes-Requested  needs-review',
+                ['new', 'changes-requested', 'needs-review'],
+                id='comma-and-space-separated',
+            ),
+            pytest.param(
+                ['new', 'needs-review,new'], ['new', 'needs-review'], id='multi-value'
+            ),
+        ],
+    )
+    def test_parse(self, value: Any, expected: List[str]) -> None:
+        if value is None:
+            b4.MAIN_CONFIG.pop('pw-show-states', None)
+        else:
+            b4.MAIN_CONFIG['pw-show-states'] = value
+        assert b4.review.pw_show_states() == expected
+
+    def test_fetch_requests_configured_states(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        b4.MAIN_CONFIG['pw-show-states'] = ['new', 'needs-review']
+        sess, _result = _fetch_with_backlog(monkeypatch, count=2)
+        assert sess.requests
+        for params in sess.requests[:1] + sess.fetch_params[:1]:
+            assert params['state'] == ['new', 'needs-review']

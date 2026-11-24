@@ -5045,6 +5045,7 @@ def _setup_main_config(
         'keyringsrc',
         'am-perpatch-check-cmd',
         'prep-perpatch-check-cmd',
+        'pw-show-states',
         'review-perpatch-check-cmd',
         'review-series-check-cmd',
         'review-target-branch',

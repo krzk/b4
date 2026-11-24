@@ -4038,7 +4038,7 @@ def pw_fetch_series(
     patches_url = '/'.join((api_url, 'patches'))
     params: Dict[str, Any] = {
         'project': pwproj,
-        'state': ['new', 'under-review'],
+        'state': pw_show_states(),
         'order': '-date',
         'per_page': str(PW_PER_PAGE),
         'archived': 'false',
@@ -4245,6 +4245,29 @@ def pw_fetch_checks(
         except Exception:
             continue
     return all_checks
+
+
+PW_DEFAULT_SHOW_STATES = ('new', 'under-review')
+
+
+def pw_show_states() -> List[str]:
+    """Return the Patchwork states the Patchwork browser lists.
+
+    Read from ``b4.pw-show-states``, which takes a comma- or space-separated
+    list of state slugs and may be given more than once.  Falls back to
+    :data:`PW_DEFAULT_SHOW_STATES` when unset or empty.
+    """
+    val = b4.get_main_config().get('pw-show-states')
+    if isinstance(val, str):
+        val = [val]
+    states: List[str] = []
+    if isinstance(val, list):
+        for entry in val:
+            for state in re.split(r'[\s,]+', str(entry)):
+                state = state.strip().lower()
+                if state and state not in states:
+                    states.append(state)
+    return states or list(PW_DEFAULT_SHOW_STATES)
 
 
 def pw_config_state(key: str) -> Optional[str]:

@@ -128,8 +128,6 @@ def _format_series_label(
 class PwSeriesItem(ListItem):
     """A single Patchwork series entry in the listing."""
 
-    ACTION_REQUIRED_STATES = ('new', 'under-review')
-
     def __init__(
         self,
         series: Dict[str, Any],
@@ -143,7 +141,7 @@ class PwSeriesItem(ListItem):
         self.show_delegate = show_delegate
         self.selected = selected
         state = series.get('state', 'new')
-        if state not in self.ACTION_REQUIRED_STATES:
+        if state not in b4.review.pw_show_states():
             self.add_class('--dimmed')
         if tracked:
             self.add_class('--tracked')
@@ -874,7 +872,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
             if item is None:
                 continue
             item.selected = False
-            if new_state in PwSeriesItem.ACTION_REQUIRED_STATES:
+            if new_state in b4.review.pw_show_states():
                 item.remove_class('--dimmed')
             else:
                 item.add_class('--dimmed')
